@@ -1,0 +1,10 @@
+[headers]
+User-Agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+[cookies]
+ndus =  "" #paste ndus here
+[config]
+target_path = "/" #root dir in terabox to upload
+chunck_size = 5 #size of each chunck default to 5mb
+remove_after = false # remove file after uploaded?
+
+#rename this to config.toml
