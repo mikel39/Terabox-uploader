@@ -6,5 +6,6 @@ ndus =  "" #paste ndus here
 target_path = "/" #root dir in terabox to upload
 chunck_size = 5 #size of each chunck default to 5mb
 remove_after = false # remove file after uploaded?
+parallel = 4
 
 #rename this to config.toml

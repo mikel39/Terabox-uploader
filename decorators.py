@@ -3,12 +3,12 @@ from pathlib import Path
 
 
 def logger(func):
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         path = Path(args[1])
         path = path.parts[-1]
         start = perf_counter()
         print(f'Uploading {str(path)}....')
-        result = func(*args, **kwargs)
+        result = await func(*args, **kwargs)
         end = perf_counter()
         if result:
             print(f'Uploaded in {round(end - start, 2)} seconds\n')

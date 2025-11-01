@@ -3,6 +3,8 @@ import re
 import urllib.parse
 from pathlib import Path
 from decorators import logger
+import aiofiles
+import asyncio
 
 
 class Terabox:
@@ -11,21 +13,24 @@ class Terabox:
         self.target_path = config['target_path']
         self.chunk_size = config['chunck_size'] * 1024 * 1024
         self.remove = config['remove_after']
-        self.bdstoken, self.jstoken = self._get_info()
+        self.parallel = config['parallel']
+        self.jstoken = None
+        self.bdstoken = None
 
-    def _get_info(self):
-        response = self.client.get('')
+    async def _get_info(self):
+        response = await self.client.get('')
         data = urllib.parse.unquote(response.text)
         bdstoken = re.search(r'"(bdstoken)\W{3}(\w*)",', data, re.I)
         jstoken = re.search(r'"?(jstoken).*fn\W*(\w*)', data, re.I)
 
         if not bdstoken or not jstoken:
             print('Failed to get jstoken, bdstoken')
-            return None, None
+            return
 
-        return bdstoken.group(2), jstoken.group(2)
+        self.bdstoken = bdstoken.group(2)
+        self.jstoken = jstoken.group(2)
 
-    def _precreate(self, path_file, size, blocklist):
+    async def _precreate(self, path_file, size, blocklist):
         path = Path(self.target_path) / path_file
         path = str(path).replace(':', '').replace('?', '')
 
@@ -36,9 +41,8 @@ class Terabox:
             'size': size,
             'block_list': blocklist,
         }
-
         precreate_url = f'/api/precreate?app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={self.jstoken}'
-        response = self.client.post(precreate_url, data=data)
+        response = await self.client.post(precreate_url, data=data)
         response = response.json()
 
         if response['errmsg']:
@@ -47,10 +51,12 @@ class Terabox:
 
         return response['uploadid']
 
-    def _upload(self, uploadid, file_name, chunck, part):
+    async def _upload(self, uploadid, file_name, chunck, part):
         path = Path(self.target_path) / file_name
         upload_url = f'https://c-jp.terabox.com/rest/2.0/pcs/superfile2?method=upload&app_id=250528&channel=dubox&clienttype=0&web=1&path={path}&uploadid={uploadid}&uploadsign=0&partseq={part}'
-        response = self.client.post(upload_url, files={'file': chunck})
+        response = await self.client.post(
+            upload_url, files={'file': chunck}, timeout=60.0
+        )
         response = response.json()
 
         md5 = response.get('md5')
@@ -60,7 +66,7 @@ class Terabox:
 
         return md5
 
-    def _create(self, path_file, size, uploadid, blocklist):
+    async def _create(self, path_file, size, uploadid, blocklist):
         create_url = f'/api/create?isdir=0&rtype=1&bdstoken={self.bdstoken}&app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={self.jstoken}'
 
         path = Path(self.target_path) / path_file
@@ -74,7 +80,7 @@ class Terabox:
             'block_list': blocklist,
         }
 
-        response = self.client.post(create_url, data=data)
+        response = await self.client.post(create_url, data=data)
         response = response.json()
 
         if response['errmsg']:
@@ -93,39 +99,55 @@ class Terabox:
         return size, blocklist
 
     @logger
-    def _upload_file(self, path_file, remote_path):
-        with open(path_file, 'rb') as file:
+    async def _upload_file(self, path_file, remote_path):
+        async with aiofiles.open(path_file, 'rb') as file:
             size, blocklist = self._get_bl_hash(path_file)
-            uploadid = self._precreate(remote_path, size, blocklist)
+            uploadid = await self._precreate(remote_path, size, blocklist)
 
             if not uploadid:
                 return
 
             part = 0
             hashes = []
+            tasks = []
 
             while True:
-                chunk = file.read(self.chunk_size)
+                chunk = await file.read(self.chunk_size)
 
                 if not chunk:
                     break
 
                 md5 = self._upload(uploadid, remote_path, chunk, part)
 
-                if not md5:
-                    return
+                tasks.append(md5)
 
-                hashes.append(md5)
+                if len(tasks) >= self.parallel:
+                    result = await asyncio.gather(*tasks)
+                    hashes.extend(result)
+                    tasks.clear()
+
                 part += 1
 
-            success = self._create(remote_path, size, uploadid, json.dumps(hashes))
+            if tasks:
+                result = await asyncio.gather(*tasks)
+                hashes.extend(result)
+                tasks.clear()
+
+            success = await self._create(
+                remote_path, size, uploadid, json.dumps(hashes)
+            )
 
             if success and self.remove:
                 Path(path_file).unlink()
 
             return success
 
-    def upload_files(self, files):
+    async def upload_files(self, files):
+        await self._get_info()
+
+        if not self.bdstoken or not self.jstoken:
+            return
+
         paths = []
 
         def get_files(*f):
@@ -144,4 +166,4 @@ class Terabox:
         for file in paths:
             remote_path = Path(file).relative_to(Path(*path.parts[0:-1]))
 
-            self._upload_file(file, str(remote_path))
+            await self._upload_file(file, str(remote_path))
