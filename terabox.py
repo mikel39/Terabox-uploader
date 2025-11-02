@@ -122,9 +122,8 @@ class Terabox:
                 tasks.append(md5)
 
                 if len(tasks) >= self.parallel:
-                    result = await asyncio.gather(*tasks)
-                    hashes.extend(result)
-                    tasks.clear()
+                    result = await tasks.pop(0)
+                    hashes.append(result)
 
                 part += 1
 
