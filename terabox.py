@@ -5,6 +5,7 @@ from pathlib import Path
 from decorators import logger
 import aiofiles
 import asyncio
+import gc
 
 
 class Terabox:
@@ -124,6 +125,7 @@ class Terabox:
                 if len(tasks) >= self.parallel:
                     result = await tasks.pop(0)
                     hashes.append(result)
+                    gc.collect()
 
                 part += 1
 
